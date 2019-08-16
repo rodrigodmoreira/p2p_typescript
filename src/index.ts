@@ -2,7 +2,10 @@ import { randomBytes } from 'crypto'
 import * as swarm from 'discovery-swarm'
 import * as defaults from 'dat-swarm-defaults'
 import * as getPort from 'get-port'
-import ReadLine from './readline'
+import * as readline from 'readline'
+import { writeFile, readFile } from 'fs'
+import * as path from 'path'
+import { uniqueNamesGenerator } from 'unique-names-generator'
 
 /**
  * Here we will save our TCP peer connections
@@ -10,46 +13,38 @@ import ReadLine from './readline'
  */
 const peers: Record<any, any> = {}
 // Counter for connections, used for identify connections
-let connSeq = 0
+let nextConnId = 0
 
 // Peer Identity, a random hash for identify your peer
 const myId = randomBytes(32)
-console.log('Your identity: ' + myId.toString('hex'))
 
-// reference to redline interface
-let rl = new ReadLine()
-/**
- * Function for safely call console.log with readline interface active
- */
-function log (args: string[] = []) {
-  if (rl.isOpen()) {
-    rl.getReader().clearLine()    
-    rl.getReader().close()
-    rl.discardReader()
-  }
+console.log(`Your identity:\n  ${myId.toString('hex')}`)
 
-  args.forEach(arg => {
-    console.log(arg)
-  })
+const rline = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout
+})
 
-  askUser()
-}
-
-/*
-* Function to get text input from user and send it to other peers
-* Like a chat :)
-*/
-const askUser = async () => {
-  rl.getReader().question('Send message: ', (message: string) => {
-    // Broadcast to peers
-    for (let id in peers) {
-      peers[id].conn.write(message)
+rline.on('line', (fileName: string) => {
+  console.log(`\nSending file ${fileName}`)
+  readFile(path.resolve(__dirname, '../files', fileName), (err: NodeJS.ErrnoException | null, data: Buffer) => {
+    if (err) {
+      // console.log(`- ${err}`)
+      console.log(`- Error on reading file`)
+    } else {
+      // Broadcast to peers
+      let peersIds = ''
+      for (let id in peers) {
+        peers[id].conn.write(Buffer.from(JSON.stringify({
+          fileName: fileName,
+          data: data
+        })))
+        peersIds = peersIds.concat(`${id}, `)
+      }
+      console.log(`- File sent to: ${peersIds}`)
     }
-    rl.getReader().close()
-    rl.discardReader()
-    askUser()
-  });
-}
+  })
+})
 
 /** 
  * Default DNS and DHT servers
@@ -57,7 +52,7 @@ const askUser = async () => {
  */
 const config = defaults({
   // peer-id
-  id: myId,
+  id: myId
 })
 
 /**
@@ -67,49 +62,65 @@ const config = defaults({
 const sw = swarm(config)
 
 
-const connector = async () => {
-
+const app = async () => {
   // Choose a random unused port for listening TCP peer connections
   const port = await getPort()
 
   sw.listen(port)
-  console.log('Listening to port: ' + port)
+  console.log(`Listening to port: ${port}`)
 
   /**
    * The channel we are connecting to.
    * Peers should discover other peers in this channel
    */
-  sw.join('our-fun-channel')
+  sw.join('file-sharing-channel')
 
   sw.on('connection', (conn: any, info: any) => {
-    // Connection id
-    const seq = connSeq
 
+    // Connection id
+    const connId = nextConnId
     const peerId = info.id.toString('hex')
-    log([`Connected #${seq} to peer: ${peerId}`])
+
+    console.log(`\nConnection ${connId} to peer:\n  ${peerId}`)
 
     // Keep alive TCP connection with peer
     if (info.initiator) {
       try {
         conn.setKeepAlive(true, 600)
-      } catch (exception) {
-        log(['exception', exception])
+      } catch (err) {
+        console.log(err)
       }
     }
 
-    conn.on('data', (data: any) => {
+    conn.on('data', (data: Buffer) => {
+      console.log(`\nReceiving data from peer\n  ${peerId}`)
       // Here we handle incomming messages
-      log([
-        'Received Message from peer ' + peerId,
-        '----> ' + data.toString()
-      ])
+      let dataJSON 
+      try {
+        let dataStr = data.toString()
+        dataJSON = JSON.parse(dataStr)
+      } catch(err) {
+        // console.log(`- ${err}`)
+        console.log(`- Error on parsing file`)
+        return
+      }
+      console.log(`- Received file ${dataJSON.fileName}`)
+
+      const savePath = path.resolve(__dirname, '../downloads', dataJSON.fileName)
+      writeFile(savePath, Buffer.from(dataJSON.data), (err: NodeJS.ErrnoException | null) => {
+        if (err) {
+          // console.log(`- ${err}`)
+          console.log(`- Error on saving file`)
+        } else {
+          console.log(`- Succeeded on saving file to ${savePath}`)
+        }
+      })
     })
 
     conn.on('close', () => {
-      // Here we handle peer disconnection
-      log([`Connection ${seq} closed, peer id: ${peerId}`])
+      console.log(`\nConnection ${connId} closed, peer: \n  ${peerId}`)
       // If the closing connection is the last connection with the peer, removes the peer
-      if (peers[peerId].seq === seq) {
+      if (peers[peerId].connId === connId) {
         delete peers[peerId]
       }
     })
@@ -119,14 +130,8 @@ const connector = async () => {
       peers[peerId] = {}
     }
     peers[peerId].conn = conn
-    peers[peerId].seq = seq
-    connSeq++
-
+    peers[peerId].connId = connId
+    nextConnId++
   })
-
-  // Read user message from command line
-  askUser()  
-
 }
-
-connector()
+app()
