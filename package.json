@@ -5,7 +5,6 @@
   "main": "index.js",
   "scripts": {
     "start": "node build/index.js",
-    "postinstall": "tsc",
     "dev": "tsc && node build/index.js",
     "build": "tsc"
   },
@@ -13,13 +12,11 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "crypto": "^1.0.1",
     "dat-swarm-defaults": "^1.0.2",
     "discovery-swarm": "^6.0.0",
     "get-port": "^5.0.0",
     "path": "^0.12.7",
-    "portfinder": "^1.0.21",
-    "unique-names-generator": "^3.0.0"
+    "portfinder": "^1.0.21"
   },
   "devDependencies": {
     "@types/node": "^12.7.1",
